@@ -1,0 +1,288 @@
+---
+title: "Assignment 3: Behavioral Experiment Analysis"
+author: "Your Name"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Introduction
+
+This report documents the descriptive statistics, regression modeling, data reduction, and clustering analyses for the simulated behavioral experiment contained in `Assignment3.csv`. The analysis follows the steps outlined in the assignment brief and uses only R.
+
+# Data Import and Preparation
+
+```{r libraries}
+required_packages <- c(
+  "tidyverse", "broom", "janitor", "skimr", "psych", "FactoMineR", "factoextra", "mclust"
+)
+
+for (pkg in required_packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+```
+
+```{r import}
+assignment_data <- read_csv("Assignment3.csv") %>%
+  clean_names()
+
+assignment_data <- assignment_data %>%
+  mutate(
+    sex = factor(sex, labels = c("Female", "Male")),
+    pubertal_stage = factor(pubertal_stage, ordered = TRUE),
+    id = factor(id)
+  )
+```
+
+```{r glimpse}
+glimpse(assignment_data)
+```
+
+# Part A – Descriptive Analysis
+
+## Summary Statistics
+
+```{r summary-table}
+summary_table <- assignment_data %>%
+  select(age_interview, inr, sleep_duration, sjl, starts_with("wm"), inssrt, inrtcorrect, number_nash) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  group_by(variable) %>%
+  summarize(
+    mean = mean(value, na.rm = TRUE),
+    sd = sd(value, na.rm = TRUE),
+    median = median(value, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    n = sum(!is.na(value))
+  )
+
+summary_table
+```
+
+```{r categorical-stats}
+assignment_data %>%
+  select(sex, pubertal_stage) %>%
+  map_df(~ count(tibble(value = .x), value) %>% mutate(variable = cur_column())) %>%
+  select(variable, value, n)
+```
+
+## Visualizations
+
+```{r histogram-performance, fig.height=4, fig.width=6}
+assignment_data %>%
+  ggplot(aes(x = number_nash)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "white") +
+  labs(
+    title = "Distribution of Game Performance",
+    x = "Number of Nash Equilibria Achieved",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+```{r scatter-plot, fig.height=4, fig.width=6}
+assignment_data %>%
+  ggplot(aes(x = sleep_duration, y = inssrt, color = sex)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Sleep Duration vs. Stop-Signal Reaction Time",
+    x = "Sleep Duration (hours)",
+    y = "Inhibitory Stop-Signal Reaction Time"
+  ) +
+  theme_minimal()
+```
+
+# Part B – Regression Analysis
+
+## Model Specification
+
+```{r regression-model}
+regression_model <- lm(
+  number_nash ~ age_interview + sex + pubertal_stage + sleep_duration + sjl + wmeasy + wmcomplex + wmrteasy + wmrtcomplex + inssrt + inrtcorrect,
+  data = assignment_data
+)
+```
+
+```{r regression-summary}
+reg_summary <- tidy(regression_model, conf.int = TRUE)
+reg_glance <- glance(regression_model)
+
+reg_summary
+```
+
+```{r model-fit}
+reg_glance
+```
+
+## Diagnostics
+
+```{r regression-diagnostics, fig.height=8, fig.width=8}
+par(mfrow = c(2, 2))
+plot(regression_model)
+par(mfrow = c(1, 1))
+```
+
+# Part C – Data Reduction & Clustering
+
+```{r cognitive-measures}
+cognitive_vars <- assignment_data %>%
+  select(wmeasy, wmcomplex, wmrteasy, wmrtcomplex, inssrt, inrtcorrect)
+
+scaled_cognitive <- scale(cognitive_vars)
+```
+
+## Principal Component Analysis (PCA)
+
+```{r pca}
+pca_result <- PCA(as.data.frame(scaled_cognitive), graph = FALSE)
+```
+
+```{r pca-variance}
+pca_variance <- get_eigenvalue(pca_result)
+pca_variance
+```
+
+```{r pca-scree, fig.height=4, fig.width=6}
+factoextra::fviz_eig(pca_result, addlabels = TRUE, ylim = c(0, 60))
+```
+
+```{r pca-scores}
+pca_scores <- as_tibble(pca_result$ind$coord) %>%
+  setNames(paste0("PC", seq_len(ncol(.)))) %>%
+  bind_cols(assignment_data %>% select(id))
+
+head(pca_scores)
+```
+
+## Exploratory Factor Analysis (EFA)
+
+```{r efa-parallel}
+fa_parallel <- fa.parallel(cognitive_vars, fa = "fa", n.iter = 100, show.legend = FALSE, main = "Parallel Analysis")
+```
+
+```{r efa-model}
+num_factors <- fa_parallel$nfact
+
+efa_result <- fa(cognitive_vars, nfactors = num_factors, rotate = "oblimin", fm = "ml")
+print(efa_result, cut = 0.3)
+```
+
+## Clustering on Performance
+
+```{r kmeans}
+set.seed(123)
+performance_scores <- assignment_data %>% select(number_nash)
+
+determine_k <- tibble(k = 1:6) %>%
+  mutate(total_within_ss = map_dbl(k, ~ kmeans(performance_scores, centers = ., nstart = 25)$tot.withinss))
+
+determine_k
+```
+
+```{r elbow-plot, fig.height=4, fig.width=6}
+determine_k %>%
+  ggplot(aes(x = k, y = total_within_ss)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Elbow Plot for k-Means Clustering",
+    x = "Number of Clusters",
+    y = "Total Within-Cluster Sum of Squares"
+  ) +
+  theme_minimal()
+```
+
+```{r kmeans-final}
+kmeans_model <- kmeans(performance_scores, centers = 3, nstart = 25)
+assignment_data <- assignment_data %>% mutate(kmeans_cluster = factor(kmeans_model$cluster))
+```
+
+```{r model-based-clustering}
+mbc_model <- Mclust(performance_scores)
+assignment_data <- assignment_data %>% mutate(mbc_cluster = factor(mbc_model$classification))
+```
+
+## Relating Clusters to PCA/FA and Covariates
+
+```{r cluster-summary}
+cluster_summary <- assignment_data %>%
+  group_by(kmeans_cluster) %>%
+  summarize(across(c(number_nash, sleep_duration, sjl, inssrt, inrtcorrect), list(mean = mean, sd = sd), na.rm = TRUE), .groups = "drop")
+
+cluster_summary
+```
+
+```{r clusters-pca}
+pca_cluster_scores <- assignment_data %>%
+  select(id, kmeans_cluster, mbc_cluster) %>%
+  left_join(pca_scores, by = "id")
+
+pca_cluster_scores %>% head()
+```
+
+```{r cluster-plot, fig.height=4, fig.width=6}
+pca_cluster_scores %>%
+  ggplot(aes(x = PC1, y = PC2, color = kmeans_cluster, shape = mbc_cluster)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    title = "Clusters Positioned on First Two Principal Components",
+    x = "PC1 Score",
+    y = "PC2 Score"
+  ) +
+  theme_minimal()
+```
+
+```{r efa-scores}
+efa_scores <- as_tibble(efa_result$scores) %>%
+  bind_cols(assignment_data %>% select(id, kmeans_cluster, mbc_cluster))
+
+head(efa_scores)
+```
+
+```{r cluster-efa-summary}
+efa_cluster_summary <- efa_scores %>%
+  pivot_longer(cols = -c(id, kmeans_cluster, mbc_cluster), names_to = "factor", values_to = "score") %>%
+  group_by(kmeans_cluster, factor) %>%
+  summarize(mean_score = mean(score, na.rm = TRUE), sd_score = sd(score, na.rm = TRUE), .groups = "drop")
+
+efa_cluster_summary
+```
+
+# Part D – Relating Cognitive Measures with Reaction Times (Optional)
+
+```{r optional-analysis}
+reaction_relationships <- assignment_data %>%
+  select(wmeasy, wmcomplex, wmrteasy, wmrtcomplex, inssrt, inrtcorrect) %>%
+  cor(use = "pairwise.complete.obs")
+
+reaction_relationships
+```
+
+```{r heatmap, fig.height=5, fig.width=6}
+factoextra::fviz_dist(as.dist(1 - reaction_relationships), lab_size = 3)
+```
+
+# Reporting Notes
+
+- Include summary tables and regression outputs in the final report.
+- Use the plots generated above (distribution of performance and scatter plot with regression line) and consider additional visuals (e.g., PCA biplot) if needed.
+- Discuss the number of principal components explaining at least 80% of the variance and the latent dimensions suggested by the EFA.
+- Compare k-means and model-based clustering assignments and interpret in light of PCA/FA scores and demographic covariates.
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
