@@ -37,6 +37,11 @@ for (pkg in required_packages) {
 assignment_data <- read_csv("Assignment3.csv") %>%
   clean_names()
 
+if ("inrtcorrect" %in% names(assignment_data)) {
+  assignment_data <- assignment_data %>%
+    rename(inrt_correct = inrtcorrect)
+}
+
 assignment_data <- assignment_data %>%
   mutate(
     sex = factor(sex, labels = c("Female", "Male")),
@@ -55,7 +60,7 @@ glimpse(assignment_data)
 
 ```{r summary-table}
 summary_table <- assignment_data %>%
-  select(age_interview, inr, sleep_duration, sjl, starts_with("wm"), inssrt, inrtcorrect, number_nash) %>%
+  select(age_interview, inr, sleep_duration, sjl, starts_with("wm"), inssrt, inrt_correct, number_nash) %>%
   pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
   group_by(variable) %>%
   summarize(
@@ -110,7 +115,7 @@ assignment_data %>%
 
 ```{r regression-model}
 regression_model <- lm(
-  number_nash ~ age_interview + sex + pubertal_stage + sleep_duration + sjl + wmeasy + wmcomplex + wmrteasy + wmrtcomplex + inssrt + inrtcorrect,
+  number_nash ~ age_interview + sex + pubertal_stage + sleep_duration + sjl + wmeasy + wmcomplex + wmrteasy + wmrtcomplex + inssrt + inrt_correct,
   data = assignment_data
 )
 ```
@@ -138,7 +143,7 @@ par(mfrow = c(1, 1))
 
 ```{r cognitive-measures}
 cognitive_vars <- assignment_data %>%
-  select(wmeasy, wmcomplex, wmrteasy, wmrtcomplex, inssrt, inrtcorrect)
+  select(wmeasy, wmcomplex, wmrteasy, wmrtcomplex, inssrt, inrt_correct)
 
 scaled_cognitive <- scale(cognitive_vars)
 ```
@@ -219,7 +224,7 @@ assignment_data <- assignment_data %>% mutate(mbc_cluster = factor(mbc_model$cla
 ```{r cluster-summary}
 cluster_summary <- assignment_data %>%
   group_by(kmeans_cluster) %>%
-  summarize(across(c(number_nash, sleep_duration, sjl, inssrt, inrtcorrect), list(mean = mean, sd = sd), na.rm = TRUE), .groups = "drop")
+  summarize(across(c(number_nash, sleep_duration, sjl, inssrt, inrt_correct), list(mean = mean, sd = sd), na.rm = TRUE), .groups = "drop")
 
 cluster_summary
 ```
@@ -264,7 +269,7 @@ efa_cluster_summary
 
 ```{r optional-analysis}
 reaction_relationships <- assignment_data %>%
-  select(wmeasy, wmcomplex, wmrteasy, wmrtcomplex, inssrt, inrtcorrect) %>%
+  select(wmeasy, wmcomplex, wmrteasy, wmrtcomplex, inssrt, inrt_correct) %>%
   cor(use = "pairwise.complete.obs")
 
 reaction_relationships
